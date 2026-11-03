@@ -7,6 +7,7 @@ from statsmodels.stats.power import NormalIndPower, TTestIndPower
 from statsmodels.stats.proportion import proportion_effectsize, proportions_ztest
 
 from pulso_exp.stats import (
+    beta_binomial_ab,
     cohens_h,
     cuped,
     mde_proportions,
@@ -136,3 +137,32 @@ def test_srm_detects_skewed_split():
 def test_srm_respects_unequal_design():
     assert not srm_check([20_050, 79_950], expected_ratios=[0.2, 0.8]).mismatch
     assert srm_check([20_050, 79_950]).mismatch
+
+
+# ----------------------------------------------------------------- Bayesian
+
+
+def test_posterior_parameters_are_conjugate_update():
+    res = beta_binomial_ab(30, 100, 40, 100, prior=(1, 1))
+    assert (res.alpha_c, res.beta_c, res.alpha_t, res.beta_t) == (31, 71, 41, 61)
+    assert res.mean_c == pytest.approx(31 / 102)
+
+
+def test_identical_arms_are_a_coin_flip():
+    res = beta_binomial_ab(500, 1_000, 500, 1_000)
+    assert res.prob_treatment_better == pytest.approx(0.5, abs=0.01)
+    assert res.uplift_ci[0] < 0 < res.uplift_ci[1]
+
+
+def test_clear_winner_has_high_probability_and_low_loss():
+    res = beta_binomial_ab(1_000, 10_000, 1_200, 10_000)
+    assert res.prob_treatment_better > 0.999
+    assert res.expected_loss_treatment < 1e-5
+    assert res.uplift_ci[0] > 0
+
+
+def test_bayes_agrees_with_frequentist_direction():
+    freq = two_proportion_ztest(900, 10_000, 960, 10_000)
+    bayes = beta_binomial_ab(900, 10_000, 960, 10_000)
+    # one-sided p-value ~ 1 - P(T > C) under a flat prior with large n
+    assert 1 - bayes.prob_treatment_better == pytest.approx(freq.p_value / 2, abs=0.01)

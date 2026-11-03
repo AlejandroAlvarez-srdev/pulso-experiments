@@ -175,3 +175,60 @@ def srm_check(
         float(p_value),
         bool(p_value < threshold),
     )
+
+
+# --------------------------------------------------------------------------- Bayesian
+
+
+@dataclass(frozen=True)
+class BayesResult:
+    alpha_c: float
+    beta_c: float
+    alpha_t: float
+    beta_t: float
+    prob_treatment_better: float
+    expected_loss_treatment: float
+    uplift_ci: tuple[float, float]
+
+    @property
+    def mean_c(self) -> float:
+        return self.alpha_c / (self.alpha_c + self.beta_c)
+
+    @property
+    def mean_t(self) -> float:
+        return self.alpha_t / (self.alpha_t + self.beta_t)
+
+
+def beta_binomial_ab(
+    conv_c: int,
+    n_c: int,
+    conv_t: int,
+    n_t: int,
+    prior: tuple[float, float] = (1.0, 1.0),
+    draws: int = 200_000,
+    ci: float = 0.95,
+    seed: int = 0,
+) -> BayesResult:
+    """Conjugate Beta-Binomial posterior for each arm, summarised by Monte Carlo.
+
+    ``expected_loss_treatment`` is E[max(p_c - p_t, 0)]: the conversion we expect
+    to give up if we ship treatment and it is actually worse.
+    """
+    a0, b0 = prior
+    ac, bc = a0 + conv_c, b0 + n_c - conv_c
+    at, bt = a0 + conv_t, b0 + n_t - conv_t
+    rng = np.random.default_rng(seed)
+    pc = rng.beta(ac, bc, size=draws)
+    pt = rng.beta(at, bt, size=draws)
+    uplift = pt / pc - 1
+    tail = (1 - ci) / 2
+    lo, hi = np.quantile(uplift, [tail, 1 - tail])
+    return BayesResult(
+        ac,
+        bc,
+        at,
+        bt,
+        prob_treatment_better=float((pt > pc).mean()),
+        expected_loss_treatment=float(np.maximum(pc - pt, 0).mean()),
+        uplift_ci=(float(lo), float(hi)),
+    )
