@@ -232,3 +232,46 @@ def beta_binomial_ab(
         expected_loss_treatment=float(np.maximum(pc - pt, 0).mean()),
         uplift_ci=(float(lo), float(hi)),
     )
+
+
+# --------------------------------------------------------------------------- peeking
+
+
+@dataclass(frozen=True)
+class PeekingResult:
+    n_sims: int
+    n_looks: int
+    false_positive_fixed: float
+    false_positive_peeking: float
+    first_rejection_look: np.ndarray
+
+
+def simulate_peeking(
+    p: float = 0.5,
+    n_per_arm: int = 10_000,
+    n_looks: int = 20,
+    n_sims: int = 2_000,
+    alpha: float = 0.05,
+    seed: int = 0,
+) -> PeekingResult:
+    """A/A simulation: how often does 'stop at the first p < alpha' declare a winner?
+
+    Each simulated test accrues ``n_per_arm`` units per arm in ``n_looks`` equal
+    batches. Both arms share the same true rate, so every rejection is a false
+    positive. ``fixed`` only tests once at the planned horizon.
+    """
+    rng = np.random.default_rng(seed)
+    batch = n_per_arm // n_looks
+    conv_c = rng.binomial(batch, p, size=(n_sims, n_looks)).cumsum(axis=1)
+    conv_t = rng.binomial(batch, p, size=(n_sims, n_looks)).cumsum(axis=1)
+    n = batch * np.arange(1, n_looks + 1)
+    pooled = (conv_c + conv_t) / (2 * n)
+    se = np.sqrt(pooled * (1 - pooled) * 2 / n)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        z = np.where(se > 0, (conv_t - conv_c) / n / se, 0.0)
+    reject = np.abs(z) > _z(alpha)
+    any_reject = reject.any(axis=1)
+    first = np.where(any_reject, reject.argmax(axis=1) + 1, 0)
+    return PeekingResult(
+        n_sims, n_looks, float(reject[:, -1].mean()), float(any_reject.mean()), first[any_reject]
+    )

@@ -13,6 +13,7 @@ from pulso_exp.stats import (
     mde_proportions,
     sample_size_means,
     sample_size_proportions,
+    simulate_peeking,
     srm_check,
     two_proportion_ztest,
     welch_ttest,
@@ -166,3 +167,13 @@ def test_bayes_agrees_with_frequentist_direction():
     bayes = beta_binomial_ab(900, 10_000, 960, 10_000)
     # one-sided p-value ~ 1 - P(T > C) under a flat prior with large n
     assert 1 - bayes.prob_treatment_better == pytest.approx(freq.p_value / 2, abs=0.01)
+
+
+# ----------------------------------------------------------------- peeking
+
+
+def test_fixed_horizon_keeps_alpha_and_peeking_inflates_it():
+    res = simulate_peeking(p=0.3, n_per_arm=4_000, n_looks=20, n_sims=4_000, seed=11)
+    assert res.false_positive_fixed == pytest.approx(0.05, abs=0.015)
+    assert res.false_positive_peeking > 2 * res.false_positive_fixed
+    assert res.first_rejection_look.min() >= 1
