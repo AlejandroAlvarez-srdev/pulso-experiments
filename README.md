@@ -1,4 +1,9 @@
-# pulso-experiments
+<p align="center"><img src="assets/banner.svg" alt="pulso-experiments" width="100%"></p>
+
+<p align="center"><img src="https://img.shields.io/badge/Python-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python"> <img src="https://img.shields.io/badge/Jupyter-F37626?style=for-the-badge&logo=jupyter&logoColor=white" alt="Jupyter"> <img src="https://img.shields.io/badge/NumPy-013243?style=for-the-badge&logo=numpy&logoColor=white" alt="NumPy"> <img src="https://img.shields.io/badge/scikit--learn-F7931E?style=for-the-badge&logo=scikitlearn&logoColor=white" alt="scikit-learn"> <img src="https://img.shields.io/badge/GitHub_Actions-2088FF?style=for-the-badge&logo=githubactions&logoColor=white" alt="GitHub Actions"> <img src="https://img.shields.io/badge/20_commits-6a178c?style=for-the-badge" alt="20 commits"></p>
+
+<h1 align="center">pulso-experiments</h1>
+<!-- /header -->
 
 Product analytics and experimentation for **Pulso**, a marketplace where merchants post delivery tasks and
 independent "pulsers" carry them out. This repo is the data-science side: a seeded simulator of the checkout funnel
@@ -9,6 +14,17 @@ launch decision and a production-minded ETA model.
 > effects on purpose. No number in this repo describes a real company, product or user.
 >
 > Pulso is a fictional company used to explore these patterns.
+
+## At a glance
+
+<table>
+  <tr>
+    <td align="center" width="25%"><b>Power, SRM, CUPED, Bayesian</b><br>A/B</td>
+    <td align="center" width="25%"><b>Peeking: 4% → 26% false positives</b><br>Insight</td>
+    <td align="center" width="25%"><b>ETA MAE 11.5 → 4.8 min</b><br>Model</td>
+    <td align="center" width="25%"><b>33, notebooks run in CI</b><br>Tests</td>
+  </tr>
+</table>
 
 ## The notebooks
 
