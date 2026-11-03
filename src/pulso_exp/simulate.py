@@ -19,9 +19,11 @@ Column names are the snake_case form of the shared Pulso entities
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import uuid
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -388,3 +390,23 @@ def simulate(config: SimConfig | None = None) -> Dataset:
     orders = _orders(rng, cfg, merchants, sessions, hidden)
     events = _events(sessions, orders)
     return Dataset(merchants=merchants, sessions=sessions, orders=orders, events=events, config=cfg)
+
+
+def main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(
+        description="Write the simulated Pulso dataset as gzipped CSV."
+    )
+    parser.add_argument("--out", type=Path, default=Path("data"))
+    parser.add_argument("--seed", type=int, default=SimConfig.seed)
+    args = parser.parse_args(argv)
+    data = simulate(SimConfig(seed=args.seed))
+    args.out.mkdir(parents=True, exist_ok=True)
+    for name in ("merchants", "sessions", "orders", "events"):
+        path = args.out / f"{name}.csv.gz"
+        getattr(data, name).to_csv(path, index=False)
+        print(f"{path}: {len(getattr(data, name)):,} rows")
+    print("config:", asdict(data.config))
+
+
+if __name__ == "__main__":
+    main()

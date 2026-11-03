@@ -19,6 +19,9 @@ dependencies = [
     "scikit-learn>=1.6",
 ]
 
+[project.scripts]
+pulso-simulate = "pulso_exp.simulate:main"
+
 [tool.setuptools.packages.find]
 where = ["src"]
 

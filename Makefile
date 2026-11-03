@@ -1,7 +1,7 @@
 PY ?= .venv/bin/python
 NOTEBOOKS := $(wildcard notebooks/*.ipynb)
 
-.PHONY: install lint test notebooks html all
+.PHONY: install lint test notebooks html data all
 
 install:
 	python3 -m venv .venv
@@ -21,5 +21,8 @@ notebooks:
 
 html:
 	$(PY) -m jupyter nbconvert --to html --output-dir docs $(NOTEBOOKS)
+
+data:
+	$(PY) -m pulso_exp.simulate --out data
 
 all: lint test notebooks html
