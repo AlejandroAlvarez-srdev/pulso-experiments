@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pulso-exp"
+version = "0.1.0"
+description = "Product analytics and experimentation for Pulso, on a seeded simulated dataset."
+readme = "README.md"
+license = "MIT"
+authors = [{ name = "Alejandro Álvarez" }]
+requires-python = ">=3.12"
+dependencies = [
+    "numpy>=2.2",
+    "pandas>=2.2",
+    "scipy>=1.14",
+    "statsmodels>=0.14",
+    "matplotlib>=3.9",
+    "scikit-learn>=1.6",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-include = ["*.ipynb"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "NPY", "PD", "SIM"]
+# unstack() is idiomatic for wide summary tables
+ignore = ["PD010"]
+
+[tool.ruff.lint.per-file-ignores]
+"notebooks/*.ipynb" = ["E402", "E501"]
