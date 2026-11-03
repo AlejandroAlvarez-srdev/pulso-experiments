@@ -138,3 +138,40 @@ def cuped(y: np.ndarray, x: np.ndarray) -> CupedResult:
     adjusted = y - theta * (x - x.mean())
     reduction = 1 - adjusted.var(ddof=1) / y.var(ddof=1)
     return CupedResult(adjusted, theta, float(reduction))
+
+
+# --------------------------------------------------------------------------- SRM
+
+
+@dataclass(frozen=True)
+class SrmResult:
+    observed: tuple[int, ...]
+    expected: tuple[float, ...]
+    chi2: float
+    p_value: float
+    mismatch: bool
+
+
+def srm_check(
+    observed: list[int] | tuple[int, ...],
+    expected_ratios: list[float] | None = None,
+    threshold: float = 0.001,
+) -> SrmResult:
+    """Chi-square goodness-of-fit for sample ratio mismatch.
+
+    The conventional threshold is strict (p < 0.001): SRM checks run on every
+    experiment, and a real SRM usually produces p-values many orders smaller.
+    """
+    obs = np.asarray(observed, dtype=float)
+    ratios = (
+        np.full(obs.size, 1 / obs.size) if expected_ratios is None else np.asarray(expected_ratios)
+    )
+    expected = obs.sum() * ratios / ratios.sum()
+    chi2, p_value = st.chisquare(obs, expected)
+    return SrmResult(
+        tuple(int(o) for o in obs),
+        tuple(float(e) for e in expected),
+        float(chi2),
+        float(p_value),
+        bool(p_value < threshold),
+    )

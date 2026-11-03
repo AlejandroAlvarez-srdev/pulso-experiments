@@ -12,6 +12,7 @@ from pulso_exp.stats import (
     mde_proportions,
     sample_size_means,
     sample_size_proportions,
+    srm_check,
     two_proportion_ztest,
     welch_ttest,
 )
@@ -117,3 +118,21 @@ def test_cuped_with_useless_covariate_does_nothing():
     res = cuped(y, rng.normal(size=10_000))
     assert abs(res.variance_reduction) < 0.01
     assert cuped(y, np.ones_like(y)).theta == 0.0
+
+
+# ----------------------------------------------------------------- SRM
+
+
+def test_srm_passes_balanced_split():
+    assert not srm_check([50_120, 49_880]).mismatch
+
+
+def test_srm_detects_skewed_split():
+    res = srm_check([51_000, 49_000])
+    assert res.mismatch
+    assert res.p_value < 1e-9
+
+
+def test_srm_respects_unequal_design():
+    assert not srm_check([20_050, 79_950], expected_ratios=[0.2, 0.8]).mismatch
+    assert srm_check([20_050, 79_950]).mismatch
