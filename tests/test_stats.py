@@ -8,6 +8,7 @@ from statsmodels.stats.proportion import proportion_effectsize, proportions_ztes
 
 from pulso_exp.stats import (
     cohens_h,
+    cuped,
     mde_proportions,
     sample_size_means,
     sample_size_proportions,
@@ -78,3 +79,41 @@ def test_welch_matches_scipy():
     assert res.p_value == pytest.approx(ref.pvalue)
     ci = ref.confidence_interval()
     assert (res.ci_low, res.ci_high) == pytest.approx((ci.low, ci.high))
+
+
+# ----------------------------------------------------------------- CUPED
+
+
+def _correlated(n=20_000, rho=0.7, seed=3):
+    rng = np.random.default_rng(seed)
+    x = rng.normal(100, 20, n)
+    y = 50 + rho * (x - 100) + rng.normal(0, 20 * math.sqrt(1 - rho**2), n)
+    return y, x
+
+
+def test_cuped_reduces_variance_by_rho_squared():
+    y, x = _correlated(rho=0.7)
+    res = cuped(y, x)
+    assert res.adjusted.var() < y.var()
+    assert res.variance_reduction == pytest.approx(np.corrcoef(y, x)[0, 1] ** 2, rel=1e-6)
+    assert res.variance_reduction == pytest.approx(0.49, abs=0.03)
+
+
+def test_cuped_preserves_mean_and_treatment_effect():
+    y, x = _correlated()
+    arm = np.random.default_rng(9).random(y.size) < 0.5
+    y = y + np.where(arm, 2.0, 0.0)
+    res = cuped(y, x)
+    assert res.adjusted.mean() == pytest.approx(y.mean())
+    raw = welch_ttest(y[~arm], y[arm])
+    adj = welch_ttest(res.adjusted[~arm], res.adjusted[arm])
+    assert adj.diff == pytest.approx(2.0, abs=0.3)
+    assert (adj.ci_high - adj.ci_low) < (raw.ci_high - raw.ci_low)
+
+
+def test_cuped_with_useless_covariate_does_nothing():
+    rng = np.random.default_rng(5)
+    y = rng.normal(size=10_000)
+    res = cuped(y, rng.normal(size=10_000))
+    assert abs(res.variance_reduction) < 0.01
+    assert cuped(y, np.ones_like(y)).theta == 0.0

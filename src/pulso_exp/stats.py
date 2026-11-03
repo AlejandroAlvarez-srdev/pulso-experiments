@@ -112,3 +112,29 @@ def welch_ttest(control: np.ndarray, treatment: np.ndarray, alpha: float = 0.05)
     return EffectEstimate(
         a.mean(), b.mean(), diff, diff / a.mean(), diff - half, diff + half, t, p_value
     )
+
+
+# --------------------------------------------------------------------------- CUPED
+
+
+@dataclass(frozen=True)
+class CupedResult:
+    adjusted: np.ndarray
+    theta: float
+    variance_reduction: float
+
+
+def cuped(y: np.ndarray, x: np.ndarray) -> CupedResult:
+    """CUPED: y_adj = y - theta * (x - mean(x)), theta = cov(y, x) / var(x).
+
+    ``x`` must be a pre-experiment covariate (unaffected by treatment) and
+    ``theta`` is estimated on both arms pooled, so the adjusted metric keeps the
+    same expectation in each arm while its variance shrinks by corr(y, x)^2.
+    """
+    y = np.asarray(y, dtype=float)
+    x = np.asarray(x, dtype=float)
+    var_x = x.var(ddof=1)
+    theta = 0.0 if var_x == 0 else float(np.cov(y, x, ddof=1)[0, 1] / var_x)
+    adjusted = y - theta * (x - x.mean())
+    reduction = 1 - adjusted.var(ddof=1) / y.var(ddof=1)
+    return CupedResult(adjusted, theta, float(reduction))
