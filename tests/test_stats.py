@@ -1,14 +1,18 @@
 import math
 
+import numpy as np
 import pytest
+from scipy import stats as st
 from statsmodels.stats.power import NormalIndPower, TTestIndPower
-from statsmodels.stats.proportion import proportion_effectsize
+from statsmodels.stats.proportion import proportion_effectsize, proportions_ztest
 
 from pulso_exp.stats import (
     cohens_h,
     mde_proportions,
     sample_size_means,
     sample_size_proportions,
+    two_proportion_ztest,
+    welch_ttest,
 )
 
 # ----------------------------------------------------------------- power
@@ -50,3 +54,27 @@ def test_sample_size_means_close_to_ttest_power():
 def test_sample_size_rejects_impossible_target():
     with pytest.raises(ValueError):
         sample_size_proportions(0.9, 0.2)
+
+
+# ----------------------------------------------------------------- frequentist tests
+
+
+def test_two_proportion_ztest_matches_statsmodels():
+    res = two_proportion_ztest(5_200, 10_000, 5_400, 10_000)
+    z, p = proportions_ztest([5_400, 5_200], [10_000, 10_000])
+    assert res.statistic == pytest.approx(z)
+    assert res.p_value == pytest.approx(p)
+    assert res.diff == pytest.approx(0.02)
+    assert res.ci_low < res.diff < res.ci_high
+
+
+def test_welch_matches_scipy():
+    rng = np.random.default_rng(1)
+    a = rng.normal(10, 2, 500)
+    b = rng.normal(10.4, 4, 800)
+    res = welch_ttest(a, b)
+    ref = st.ttest_ind(b, a, equal_var=False)
+    assert res.statistic == pytest.approx(ref.statistic)
+    assert res.p_value == pytest.approx(ref.pvalue)
+    ci = ref.confidence_interval()
+    assert (res.ci_low, res.ci_high) == pytest.approx((ci.low, ci.high))
