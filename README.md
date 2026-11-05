@@ -22,7 +22,7 @@ launch decision and a production-minded ETA model.
     <td align="center" width="25%"><b>Power, SRM, CUPED, Bayesian</b><br>A/B</td>
     <td align="center" width="25%"><b>Peeking: 4% → 26% false positives</b><br>Insight</td>
     <td align="center" width="25%"><b>ETA MAE 11.5 → 4.8 min</b><br>Model</td>
-    <td align="center" width="25%"><b>33, notebooks run in CI</b><br>Tests</td>
+    <td align="center" width="25%"><b>46, notebooks run in CI</b><br>Tests</td>
   </tr>
 </table>
 
@@ -62,6 +62,38 @@ stuck for hours, and missing device/latency/rating values. Each one gets an expl
 calibrated by decile, and quantile models give a p10–p90 band with 78 % coverage (80 % nominal). The notebook also
 covers permutation importance and serving cost (a single-row predict costs about as much as a batch of 1,000).
 
+## Sequential testing (mSPRT)
+
+The peeking result above says "do not stop early". `stats.msprt_proportions` is the honest way to stop early: a
+mixture sequential probability ratio test (Johari, Pekelis & Walsh, 2017) for a difference in proportions. With a
+normal mixing prior N(0, τ²) on the difference, the likelihood ratio has a closed form, is a martingale under H0, and by
+Ville's inequality crosses 1/α with probability at most α *no matter how often you look*. The always-valid p-value
+is the running minimum of 1/Λ.
+
+`stats.compare_sequential` runs the three stopping rules on the same simulated experiments. Settings mirror the
+notebook's checkout test: baseline 52 %, 16,800 merchants per arm, 28 daily looks, τ = 0.02, α = 0.05, 10,000
+simulations, seed 7:
+
+| true relative lift | fixed horizon | stop at first daily p < 0.05 | mSPRT, checked daily | mSPRT avg. sample used |
+|---|---|---|---|---|
+| 0 % (A/A: false-positive rate) | 5.1 % | **27.7 %** | **1.5 %** | 99 % |
+| 3 % (the planned MDE: power) | 81.6 % | 90.0 % | 53.0 % | 78 % |
+| 4.5 % (the observed lift: power) | 99.2 % | 99.6 % | 92.5 % | 51 % |
+
+Reading it: naive peeking buys its "power" with a 5× error rate. mSPRT keeps the error rate under α, and on a large
+effect it stops at about half the planned sample, but at the pre-registered MDE it detects the effect only about half
+the time. That is the real trade-off, and why the notebook keeps the fixed horizon for the launch decision. τ sets
+where the test is most sensitive: τ = 0.01 and 0.05 gave 47.7 % and 46.3 % power at the MDE (same seed), so 0.02 is
+close to the best choice for an expected absolute difference of about 1.6 points.
+
+Reproduce (each call takes about 0.1 s on a MacBook Pro, Intel Core i9-9980HK):
+
+```python
+from pulso_exp.stats import compare_sequential
+
+compare_sequential(p=0.52, lift=0.03, n_per_arm=16_800, n_looks=28, n_sims=10_000, tau=0.02, seed=7)
+```
+
 ## Architecture
 
 ```mermaid
@@ -69,7 +101,7 @@ flowchart LR
     subgraph src/pulso_exp
         SIM["simulate.py<br/>seeded generator<br/>merchants · sessions · orders · events"]
         CLEAN["clean.py<br/>data quality rules<br/>+ CleaningReport"]
-        STATS["stats.py<br/>power · z / Welch · CUPED<br/>SRM · Beta-Binomial · peeking"]
+        STATS["stats.py<br/>power · z / Welch · CUPED<br/>SRM · Beta-Binomial · peeking · mSPRT"]
         PLOT["plotting.py<br/>shared figure style"]
     end
     SIM --> NB1["01 EDA & cleaning"]
@@ -111,8 +143,10 @@ shared event names (`payment.authorized`, `payment.failed`, `pulser.assigned`, `
   need the delta method or a cluster bootstrap. The cluster bootstrap is shown on the cancellation guardrail.
 - **CUPED uses a single pre-period covariate** to keep the method transparent. CUPAC (an ML prediction as the
   covariate) would reduce variance more, and the decision write-up lists it as a follow-up.
-- **Fixed horizon, not sequential testing.** The peeking section shows why. The text names the valid alternatives
-  (alpha spending, mSPRT) but does not implement them.
+- **Fixed horizon for the decision, mSPRT as the sequential option.** The notebook keeps the pre-registered fixed
+  horizon. `stats.msprt_proportions` adds an always-valid alternative for teams that must monitor daily (see
+  [Sequential testing](#sequential-testing-msprt)); it is not used in the notebook's decision, because it costs power at
+  the planned MDE.
 - **`HistGradientBoostingRegressor` over XGBoost/LightGBM.** It has native categorical and missing-value support,
   needs no extra dependency, and is fast enough at 50k rows. Absolute-error loss targets the median, which matches the
   MAE metric and the skewed target.
@@ -159,6 +193,12 @@ rules against their invariants:
 - the Beta-Binomial posterior is the conjugate update, identical arms give P ≈ 0.5, and a clear winner gives P → 1.
   It also agrees with the one-sided p-value.
 - peeking: a fixed horizon keeps α ≈ 5 %, and daily peeking more than doubles it.
+- mSPRT: the closed-form likelihood ratio matches the mixture integral computed numerically with `scipy.integrate`.
+  Under daily peeking in an A/A simulation it stays at or below α, while naive peeking exceeds 20 %. It loses power
+  at the MDE but stops early on a large effect.
+- property-based tests (Hypothesis) on arbitrary valid inputs: the z-test is antisymmetric in the arms and its CI
+  brackets the estimate; SRM does not depend on arm order; mSPRT p-values stay in [0, 1], never increase between
+  looks, and are symmetric in the arms (including the overflow case where the evidence is overwhelming).
 - the simulator is reproducible for a given seed, keeps referential integrity, matches its events to its sessions,
   plants the effect only in the experiment period, and the novelty decays to the lasting lift.
 - cleaning removes duplicates and bots (and spares heavy real merchants), reverses ×100 typos exactly and flags
@@ -172,7 +212,8 @@ CI (`.github/workflows/ci.yml`) runs lint and tests, then executes every noteboo
 - **Experiment design:** pre-registration, choosing the randomisation and analysis unit, triggered analysis, power
   analysis and MDE trade-offs.
 - **Inference:** two-proportion z-tests, Welch's t-test, CUPED variance reduction, SRM checks, Bayesian
-  Beta-Binomial with expected loss, multiplicity (Holm), and cluster bootstrap.
+  Beta-Binomial with expected loss, multiplicity (Holm), cluster bootstrap, and always-valid sequential tests
+  (mSPRT).
 - **Judgement:** spotting a novelty effect, sizing the lasting impact, treating a borderline guardrail honestly, and
   showing (by simulation) why peeking breaks error rates.
 - **Data quality:** systematic checks and explicit, testable cleaning rules with an audit report.
@@ -185,7 +226,7 @@ CI (`.github/workflows/ci.yml`) runs lint and tests, then executes every noteboo
 
 ```
 src/pulso_exp/   simulate.py · clean.py · stats.py · plotting.py
-tests/           pytest suite for stats, simulator and cleaning rules
+tests/           pytest suite for stats (incl. mSPRT and Hypothesis properties), simulator and cleaning
 notebooks/       01-03, executed, outputs committed
 docs/            HTML exports of the executed notebooks
 ```

@@ -275,3 +275,124 @@ def simulate_peeking(
     return PeekingResult(
         n_sims, n_looks, float(reject[:, -1].mean()), float(any_reject.mean()), first[any_reject]
     )
+
+
+# --------------------------------------------------------------------------- sequential (mSPRT)
+
+
+@dataclass(frozen=True)
+class MsprtResult:
+    likelihood_ratio: np.ndarray
+    p_value: np.ndarray
+    diff: np.ndarray
+
+    def first_rejection(self, alpha: float = 0.05) -> int | None:
+        """1-based index of the first look where the always-valid p-value drops below alpha."""
+        hits = np.flatnonzero(self.p_value < alpha)
+        return int(hits[0]) + 1 if hits.size else None
+
+
+def msprt_proportions(
+    conv_c: np.ndarray | list[int],
+    n_c: np.ndarray | list[int],
+    conv_t: np.ndarray | list[int],
+    n_t: np.ndarray | list[int],
+    tau: float,
+) -> MsprtResult:
+    """Mixture SPRT for a difference in proportions, with always-valid p-values.
+
+    Inputs are cumulative counts at each look. Under a normal approximation the
+    estimate ``d = p_t - p_c`` has variance ``V`` (pooled, i.e. under H0), and
+    mixing the alternative over ``N(0, tau^2)`` gives the closed-form ratio
+
+        Lambda = sqrt(V / (V + tau^2)) * exp(tau^2 d^2 / (2 V (V + tau^2)))
+
+    (Johari, Pekelis & Walsh, "Always valid inference", 2017). ``Lambda`` is a
+    nonnegative martingale under H0, so by Ville's inequality
+    ``P(sup Lambda >= 1/alpha) <= alpha``: the test can be checked after every
+    batch and stopped at any time without inflating the false-positive rate.
+    The always-valid p-value is the running minimum of ``1 / Lambda``.
+
+    ``tau`` is the expected size of the absolute difference. Small values make
+    the test sensitive to small effects but slow on large ones, and vice versa.
+    """
+    if tau <= 0:
+        raise ValueError("tau must be positive")
+    cc, nc = np.asarray(conv_c, dtype=float), np.asarray(n_c, dtype=float)
+    ct, nt = np.asarray(conv_t, dtype=float), np.asarray(n_t, dtype=float)
+    if np.any(nc <= 0) or np.any(nt <= 0):
+        raise ValueError("every look needs at least one unit per arm")
+    diff = ct / nt - cc / nc
+    pooled = (cc + ct) / (nc + nt)
+    v = pooled * (1 - pooled) * (1 / nc + 1 / nt)
+    t2 = tau**2
+    with np.errstate(divide="ignore", invalid="ignore"):
+        log_lr = 0.5 * np.log(v / (v + t2)) + t2 * diff**2 / (2 * v * (v + t2))
+    # A degenerate look (all or no conversions so far) carries no evidence.
+    log_lr = np.where(v > 0, log_lr, 0.0)
+    # Work in log space: overwhelming evidence overflows Lambda to inf, and the
+    # p-value then underflows to 0 instead of raising a warning on 1 / inf.
+    with np.errstate(over="ignore"):
+        lr = np.exp(log_lr)
+    p_value = np.minimum.accumulate(np.exp(-np.maximum(log_lr, 0.0)), axis=-1)
+    return MsprtResult(lr, p_value, diff)
+
+
+@dataclass(frozen=True)
+class SequentialComparison:
+    n_sims: int
+    n_looks: int
+    lift: float
+    reject_fixed: float
+    reject_peeking: float
+    reject_msprt: float
+    msprt_mean_stop_fraction: float
+
+
+def compare_sequential(
+    p: float = 0.3,
+    lift: float = 0.0,
+    n_per_arm: int = 10_000,
+    n_looks: int = 20,
+    n_sims: int = 2_000,
+    tau: float = 0.02,
+    alpha: float = 0.05,
+    seed: int = 0,
+) -> SequentialComparison:
+    """Rejection rate of three stopping rules on the same simulated experiments.
+
+    - ``fixed``: one z-test at the planned horizon.
+    - ``peeking``: stop at the first look where the z-test gives p < alpha.
+    - ``msprt``: stop at the first look where the always-valid p-value < alpha.
+
+    With ``lift == 0`` every rejection is a false positive; with a positive
+    relative ``lift`` on the treatment rate the rejection rate is power.
+    ``msprt_mean_stop_fraction`` is the average share of the planned sample the
+    mSPRT used, counting runs that never reject as using all of it.
+    """
+    rng = np.random.default_rng(seed)
+    batch = n_per_arm // n_looks
+    conv_c = rng.binomial(batch, p, size=(n_sims, n_looks)).cumsum(axis=1)
+    conv_t = rng.binomial(batch, p * (1 + lift), size=(n_sims, n_looks)).cumsum(axis=1)
+    n = np.broadcast_to(batch * np.arange(1, n_looks + 1), conv_c.shape)
+
+    pooled = (conv_c + conv_t) / (2 * n)
+    se = np.sqrt(pooled * (1 - pooled) * 2 / n)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        z = np.where(se > 0, (conv_t - conv_c) / n / se, 0.0)
+    z_reject = np.abs(z) > _z(alpha)
+
+    seq = msprt_proportions(conv_c, n, conv_t, n, tau=tau)
+    seq_reject = seq.p_value < alpha
+    any_seq = seq_reject.any(axis=1)
+    stop_look = np.where(any_seq, seq_reject.argmax(axis=1) + 1, n_looks)
+
+    return SequentialComparison(
+        n_sims=n_sims,
+        n_looks=n_looks,
+        lift=lift,
+        reject_fixed=float(z_reject[:, -1].mean()),
+        reject_peeking=float(z_reject.any(axis=1).mean()),
+        reject_msprt=float(any_seq.mean()),
+        msprt_mean_stop_fraction=float((stop_look / n_looks).mean()),
+    )
